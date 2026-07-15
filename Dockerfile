@@ -59,7 +59,7 @@ WORKDIR /app
 
 COPY --from=backend-builder --chmod=0755 /out/grok2api /app/grok2api
 COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
-# orkestr-entrypoint-cache-bust: 3
+# orkestr-entrypoint-cache-bust: 4
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/grok2api-entrypoint
 
 EXPOSE 8000
