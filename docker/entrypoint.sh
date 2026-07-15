@@ -5,12 +5,7 @@ umask 077
 
 : "${GROK2API_CONFIG_SOURCE:=/run/grok2api/config.yaml}"
 
-is_root() {
-  [ "$(id -u)" -eq 0 ]
-}
-
-# Prefer an already-mounted config file. Otherwise always write under /tmp —
-# PaaS hosts often make /run and /app/data non-writable despite looking present.
+# Prefer an already-mounted config file. Otherwise materialize under /tmp.
 if [ -f "${GROK2API_CONFIG_SOURCE}" ]; then
   CONFIG_PATH="${GROK2API_CONFIG_SOURCE}"
 else
@@ -31,16 +26,23 @@ else
   chmod 0600 "${CONFIG_PATH}" 2>/dev/null || true
 fi
 
-if is_root; then
-  # Best effort install under /app (may fail on read-only rootfs).
-  if cp "${CONFIG_PATH}" /app/config.yaml 2>/dev/null; then
-    chown grok2api:grok2api /app/config.yaml 2>/dev/null || true
-    chmod 0600 /app/config.yaml 2>/dev/null || true
-    CONFIG_PATH=/app/config.yaml
-  fi
-  echo "entrypoint: root -> su-exec grok2api, config=${CONFIG_PATH}" >&2
-  exec su-exec grok2api:grok2api /app/grok2api --config "${CONFIG_PATH}" --listen 0.0.0.0:8000
+# Best-effort install under /app when the rootfs allows it.
+if cp "${CONFIG_PATH}" /app/config.yaml 2>/dev/null; then
+  chown grok2api:grok2api /app/config.yaml 2>/dev/null || true
+  chmod 0600 /app/config.yaml 2>/dev/null || true
+  CONFIG_PATH=/app/config.yaml
 fi
 
-echo "entrypoint: uid=$(id -u) config=${CONFIG_PATH}" >&2
+# Drop privileges when permitted. Orkestr (and similar hosts) often run as
+# root without CAP_SETUID/CAP_SETGID, so su-exec fails with setgroups EPERM.
+if [ "$(id -u)" -eq 0 ] && command -v su-exec >/dev/null 2>&1; then
+  if su-exec grok2api:grok2api /bin/true 2>/dev/null; then
+    echo "entrypoint: su-exec grok2api config=${CONFIG_PATH}" >&2
+    exec su-exec grok2api:grok2api /app/grok2api --config "${CONFIG_PATH}" --listen 0.0.0.0:8000
+  fi
+  echo "entrypoint: su-exec not permitted; running as uid=$(id -u) config=${CONFIG_PATH}" >&2
+else
+  echo "entrypoint: uid=$(id -u) config=${CONFIG_PATH}" >&2
+fi
+
 exec /app/grok2api --config "${CONFIG_PATH}" --listen 0.0.0.0:8000
